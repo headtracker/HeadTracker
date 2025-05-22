@@ -56,8 +56,9 @@ ISR_DIRECT_DECLARE(PPMInGPIOTE_ISR)
         // Read Timer Captured Value
         uint32_t time = PPMIN_TIMER->CC[PPMIN_TMRCOMP_CH];
 
-        // Long pulse = Start.. Minimum frame sync is 3ms.. Giving a 10us leway
-        if(time > 2990) {
+        // Long pulse = Start.. Minimum frame sync is 400us.. Giving a 10us leway 
+        // See https://headtracker.gitbook.io/head-tracker-v2.2/settings/gui-settings/output
+        if(time > 390) {
             // Copy all data to another buffer so it can be read complete
             for(int i=0;i<16;i++) {
                 ch_count = isrch_count;
