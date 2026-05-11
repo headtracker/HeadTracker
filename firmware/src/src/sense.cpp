@@ -1087,9 +1087,14 @@ void sensor_Thread()
         magy = rmagy - magyoff;
         magz = rmagz - magzoff;
 
-        magx = (magx * magsioff[0]) + (magy * magsioff[1]) + (magz * magsioff[2]);
-        magy = (magx * magsioff[3]) + (magy * magsioff[4]) + (magz * magsioff[5]);
-        magz = (magx * magsioff[6]) + (magy * magsioff[7]) + (magz * magsioff[8]);
+        // Apply Soft Iron Calibration Matrix
+        // Uses temp vars to avoid in-place overwrite corruption
+        float tmpmagx = (magx * magsioff[0]) + (magy * magsioff[1]) + (magz * magsioff[2]);
+        float tmpmagy = (magx * magsioff[3]) + (magy * magsioff[4]) + (magz * magsioff[5]);
+        float tmpmagz = (magx * magsioff[6]) + (magy * magsioff[7]) + (magz * magsioff[8]);
+        magx = tmpmagx;
+        magy = tmpmagy;
+        magz = tmpmagz;
 
         // Apply Rotation
         float tmpmag[3] = {magx, magy, magz};
