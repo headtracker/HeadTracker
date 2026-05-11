@@ -104,6 +104,11 @@ class Madgwick
     uint32_t dt = now - lastUpdate;
     lastUpdate = now;
     deltat = ((float)(dt) / 1000000.0f);
+    // Clamp to prevent integration overshoot from thread scheduling delays
+    // or 32-bit micros() wraparound (~71min). Normal period is ~6.67ms
+    // (SENSOR_PERIOD=6666us, 150Hz); cap at 100ms and fall back to the
+    // nominal rate.
+    if (deltat > 0.1f) deltat = 1.0f / 150.0f;
     return deltat;
   }
 };
