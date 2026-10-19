@@ -164,8 +164,10 @@
 
 // Magnetometer, Initial Orientation, Samples to average
 #define MADGSTART_SAMPLES 15
-#define GYRO_STABLE_SAMPLES 400
-#define GYRO_SAMPLE_WEIGHT 0.05f
+// Number of samples averaged when estimating gyro zero-bias.
+// Larger = lower noise on the bias estimate (~1/sqrt(N)), but longer wait.
+// 1000 samples @150Hz ~= 6.7s, reduces noise by sqrt(1000)~=31x.
+#define GYRO_STABLE_SAMPLES 1000
 #define GYRO_FLASH_IF_OFFSET 0.5f // Save to flash if gyro is off more than 0.5 degrees/sec from flash value
 
 // Time macros

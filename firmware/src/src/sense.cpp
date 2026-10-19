@@ -69,6 +69,11 @@
 
 void gyroCalibrate();
 void detectDoubleTap();
+void requestGyroRecalibrate();
+void gyroAutoRecalibrateCheck();
+
+// Gyro re-calibration state (used by requestGyroRecalibrate / gyroAutoRecalibrateCheck)
+static volatile bool gyroRecalRequested = false;
 
 static float auxdata[10];
 static float raccx = 0, raccy = 0, raccz = 0;
@@ -415,6 +420,12 @@ void calculate_Thread()
         rolloffset = roll;
         panoffset = pan;
         tiltoffset = tilt;
+        // Short press also triggers a gyro re-calibration. The calibration
+        // routine itself requires the device to be stable (gyro/acc rate of
+        // change within GYRO_STABLE_DIFF / ACC_STABLE_DIFF) for
+        // GYRO_STABLE_SAMPLES samples, so if the user is moving at the moment
+        // of pressing, it simply won't complete until they stop moving.
+        requestGyroRecalibrate();
         butdnw = true;
       }
 
@@ -1087,9 +1098,14 @@ void sensor_Thread()
         magy = rmagy - magyoff;
         magz = rmagz - magzoff;
 
-        magx = (magx * magsioff[0]) + (magy * magsioff[1]) + (magz * magsioff[2]);
-        magy = (magx * magsioff[3]) + (magy * magsioff[4]) + (magz * magsioff[5]);
-        magz = (magx * magsioff[6]) + (magy * magsioff[7]) + (magz * magsioff[8]);
+        // Apply Soft Iron Calibration Matrix
+        // Uses temp vars to avoid in-place overwrite corruption
+        float tmpmagx = (magx * magsioff[0]) + (magy * magsioff[1]) + (magz * magsioff[2]);
+        float tmpmagy = (magx * magsioff[3]) + (magy * magsioff[4]) + (magz * magsioff[5]);
+        float tmpmagz = (magx * magsioff[6]) + (magy * magsioff[7]) + (magz * magsioff[8]);
+        magx = tmpmagx;
+        magy = tmpmagy;
+        magz = tmpmagz;
 
         // Apply Rotation
         float tmpmag[3] = {magx, magy, magz};
@@ -1112,6 +1128,8 @@ void sensor_Thread()
     if (gyrValid)
     {
       gyroCalibrate();
+      // Auto trigger gyro recalibration when device is stationary for long enough
+      gyroAutoRecalibrateCheck();
       // If double tap detection is enabled, check for it
       if(trkset.getRstOnDbltTap())
         detectDoubleTap();
@@ -1235,12 +1253,37 @@ void gyroCalibrate()
 {
   static float last_gyro_mag = 0;
   static float last_acc_mag = 0;
+  // Arithmetic-mean accumulators. Using double to avoid precision loss when
+  // summing thousands of small samples; this gives ~sqrt(N) noise reduction
+  // on the bias estimate, vs. the old EMA (alpha=0.05) which effectively
+  // only averaged the last ~20 samples.
+  static double sum_gyrx = 0;
+  static double sum_gyry = 0;
+  static double sum_gyrz = 0;
   static float filt_gyrx = 0;
   static float filt_gyry = 0;
   static float filt_gyrz = 0;
   static bool sent_gyro_cal_msg = false;
   static uint32_t filter_samples = 0;
   static uint64_t lasttime = 0;
+
+  // Handle external recalibration request - reset all internal state so the
+  // filter runs from scratch and captures a fresh bias estimate.
+  if (gyroRecalRequested) {
+    gyroRecalRequested = false;
+    last_gyro_mag = 0;
+    last_acc_mag = 0;
+    sum_gyrx = 0;
+    sum_gyry = 0;
+    sum_gyrz = 0;
+    filt_gyrx = 0;
+    filt_gyry = 0;
+    filt_gyrz = 0;
+    sent_gyro_cal_msg = false;
+    filter_samples = 0;
+    lasttime = 0;
+    gyroCalibrated = false;
+  }
 
   if(gyroCalibrated)
     return;
@@ -1263,21 +1306,23 @@ void gyroCalibrate()
 
   // Is Gyro anc Accelerometer stable?
   if (fabsf(gyro_dif) < GYRO_STABLE_DIFF && fabsf(acc_dif) < ACC_STABLE_DIFF) {
-    // First run, preload filter
-    if (filter_samples == 0) {
-      filt_gyrx = rgyrx;
-      filt_gyry = rgyry;
-      filt_gyrz = rgyrz;
-      sent_gyro_cal_msg = false;
+    if (filter_samples < GYRO_STABLE_SAMPLES) {
+      // Accumulate; arithmetic mean over the whole window.
+      sum_gyrx += (double)rgyrx;
+      sum_gyry += (double)rgyry;
+      sum_gyrz += (double)rgyrz;
       filter_samples++;
-    } else if (filter_samples < GYRO_STABLE_SAMPLES) {
-      filt_gyrx = ((1.0f - GYRO_SAMPLE_WEIGHT) * filt_gyrx) + (GYRO_SAMPLE_WEIGHT * rgyrx);
-      filt_gyry = ((1.0f - GYRO_SAMPLE_WEIGHT) * filt_gyry) + (GYRO_SAMPLE_WEIGHT * rgyry);
-      filt_gyrz = ((1.0f - GYRO_SAMPLE_WEIGHT) * filt_gyrz) + (GYRO_SAMPLE_WEIGHT * rgyrz);
-      filter_samples++;
+      if (filter_samples == 1) {
+        sent_gyro_cal_msg = false;
+      }
     } else if (filter_samples == GYRO_STABLE_SAMPLES) {
-      LOG_INF("Gyro Calibrated, x=%.3f,y=%.3f,z=%.3f", (double)filt_gyrx, (double)filt_gyry,
-              (double)filt_gyrz);
+      const double n = (double)GYRO_STABLE_SAMPLES;
+      filt_gyrx = (float)(sum_gyrx / n);
+      filt_gyry = (float)(sum_gyry / n);
+      filt_gyrz = (float)(sum_gyrz / n);
+      LOG_INF("Gyro Calibrated (mean of %u samples), x=%.4f,y=%.4f,z=%.4f",
+              (unsigned)GYRO_STABLE_SAMPLES,
+              (double)filt_gyrx, (double)filt_gyry, (double)filt_gyrz);
       gyroCalibrated = true;
       clearLEDFlag(LED_GYROCAL);
       // Set the new Gyro Offset Values
@@ -1293,7 +1338,7 @@ void gyroCalibrate()
           fabsf(gyrzoff - filt_gyrz) > GYRO_FLASH_IF_OFFSET) {
         if (!sent_gyro_cal_msg) {
           k_sem_give(&saveToFlash_sem);
-          LOG_INF("Gyro calibration differs from saved value. Updating flash, x=%.3f,y=%.3f,z=%.3f",
+          LOG_INF("Gyro calibration differs from saved value. Updating flash, x=%.4f,y=%.4f,z=%.4f",
                (double)filt_gyrx, (double)filt_gyry, (double)filt_gyrz);
           sent_gyro_cal_msg = true;
         }
@@ -1301,11 +1346,94 @@ void gyroCalibrate()
       filter_samples++;
     }
   } else {
+    // Movement detected mid-window: discard and restart clean.
+    sum_gyrx = 0;
+    sum_gyry = 0;
+    sum_gyrz = 0;
     filter_samples = 0;
   }
 
   // Output in CSV format for determining limits
   // printk("%.4f,%.2f,%.2f\n", (float)time / 1000000.0f, gyro_dif, acc_dif);
+}
+
+// Request a gyro re-calibration. Safe to call from any thread.
+// The actual capture is performed by gyroCalibrate() on its next invocation
+// inside sensor_Thread(), and only completes while the device is stable.
+void requestGyroRecalibrate()
+{
+  gyroRecalRequested = true;
+  setLEDFlag(LED_GYROCAL);
+  LOG_INF("Gyro re-calibration requested");
+}
+
+// Automatic gyro re-calibration: whenever the device has been absolutely
+// stationary (|raw gyro| small AND |raw acc|~=1g) for a few seconds, silently
+// re-run the bias estimator. This compensates for slow bias drift that the
+// original one-shot boot calibration can't track (e.g. residual warm-up,
+// temperature drift, sensor aging).
+void gyroAutoRecalibrateCheck()
+{
+  // Derive sensor rate from SENSOR_PERIOD to avoid hardcoding 150Hz
+  static const uint32_t SENSOR_HZ = 1000000UL / SENSOR_PERIOD;
+  // Coarse stillness pre-filter thresholds. Kept board-independent
+  // because they only gate the precise stability check inside
+  // gyroCalibrate(), which uses board-specific GYRO_STABLE_DIFF /
+  // ACC_STABLE_DIFF. Values here are deliberately generous so no
+  // platform is excluded:
+  //   - 5 dps is above the worst-case bias on any supported sensor
+  //     but well below any real head movement.
+  //   - 0.05g covers mounting tilt and sensor noise without admitting
+  //     acceleration from motion.
+  static const float STILL_GYRO_THRESH = 5.0f;                 // dps (raw, includes bias)
+  static const float STILL_ACC_THRESH  = 0.05f;                // g (|raw_acc|-1g)
+  static const uint32_t STILL_SAMPLES_REQ = 5 * SENSOR_HZ;    // ~5s
+  // Rate-limit auto-recal to at most once per 5 minutes. Thermal bias
+  // drift is a minutes-scale process, and each recal briefly toggles
+  // gyroCalibrated=false, so firing too often would cause visible LED
+  // flicker during intermittent stationary periods.
+  static const uint64_t MIN_INTERVAL_MS = 5ULL * 60ULL * 1000ULL;
+
+  // State kept across invocations
+  static uint32_t stillSamples = 0;
+  static uint64_t lastAutoGyroRecalTime_ms = 0;
+
+  // Skip if an earlier request is still pending or initial calibration hasn't
+  // finished yet (gyroCalibrate() will run naturally in that case).
+  if (gyroRecalRequested || !gyroCalibrated) {
+    stillSamples = 0;
+    return;
+  }
+
+  // Use RAW sensor values to avoid dependency on current bias estimate.
+  // rgyrx/rgyry/rgyrz include the true bias, so a stationary device will
+  // read ~bias (a few dps). The generous threshold accommodates this.
+  float gyroMag = sqrtf(rgyrx * rgyrx + rgyry * rgyry + rgyrz * rgyrz);
+  float accMag  = sqrtf(raccx * raccx + raccy * raccy + raccz * raccz);
+
+  bool still = (gyroMag < STILL_GYRO_THRESH) &&
+               (fabsf(accMag - 1.0f) < STILL_ACC_THRESH);
+
+  if (!still) {
+    stillSamples = 0;
+    return;
+  }
+
+  stillSamples++;
+  if (stillSamples < STILL_SAMPLES_REQ) return;
+
+  uint64_t now = millis64();
+  if (lastAutoGyroRecalTime_ms != 0 && (now - lastAutoGyroRecalTime_ms) < MIN_INTERVAL_MS) {
+    // Too soon since last auto-recal; keep waiting but reset counter so we
+    // require another full still window.
+    stillSamples = 0;
+    return;
+  }
+
+  LOG_INF("Auto gyro re-calibrate: stationary for >%ums", (unsigned)(STILL_SAMPLES_REQ * 1000 / SENSOR_HZ));
+  lastAutoGyroRecalTime_ms = now;
+  stillSamples = 0;
+  requestGyroRecalibrate();
 }
 
 // FROM https://stackoverflow.com/questions/1628386/normalise-orientation-between-0-and-360
