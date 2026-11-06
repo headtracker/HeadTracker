@@ -169,6 +169,7 @@
 // 1000 samples @150Hz ~= 6.7s, reduces noise by sqrt(1000)~=31x.
 #define GYRO_STABLE_SAMPLES 1000
 #define GYRO_FLASH_IF_OFFSET 0.5f // Save to flash if gyro is off more than 0.5 degrees/sec from flash value
+#define GRAVITY_EARTH  9.80665f
 
 // Time macros
 #include "zephyr/kernel.h"
