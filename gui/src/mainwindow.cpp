@@ -1419,19 +1419,28 @@ void MainWindow::boardDiscovered()
     int rmajver = trkset.fwVersion().remove(1,1).left(2).toInt();    // Major Version 1.1x == 11
 
     // Firmware is too old
-    if(lmajver > rmajver) {
-        msgbox->setText(tr("The firmware on the board is too old. Upload a ") + QString::number((float)lmajver/10,'f',1) + "x version of firmware for this GUI");
-        msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
-        msgbox->show();
-        serialDisconnect();
+    if(lmajver != rmajver) {
+        // Check for pre-version
+        if(lmajver == 0) {
+            setWindowTitle(windowTitle() + " WARNING! Development version, check that versions match manually!");
+        } else {
+            // Firmware is too old
+            if(lmajver > rmajver) {
+                msgbox->setText(tr("The firmware on the board is too old. Upload a ") + QString::number((float)lmajver/10,'f',1) + "x version of firmware for this GUI");
+                msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
+                msgbox->show();
+                serialDisconnect();
 
-    // Firmware is too new
-    } else if (lmajver < rmajver) {
-        msgbox->setText(tr("Firmware is newer than supported by this application\nDownload the GUI v") + QString::number((float)rmajver/10,'f',1) +" from www.github.com/dlktdr/headtracker");
-        msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
-        msgbox->show();
-        serialDisconnect();
+            // Firmware is too new
+            } else if (lmajver < rmajver) {
+                msgbox->setText(tr("Firmware is newer than supported by this application\nDownload the GUI v") + QString::number((float)rmajver/10,'f',1) +" from www.github.com/headtracker/headtracker");
+                msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
+                msgbox->show();
+                serialDisconnect();
+            }
+        }
     }
+
     if(channelViewerOpen) {
         channelviewer->show();
     }
