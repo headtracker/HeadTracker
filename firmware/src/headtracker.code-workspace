@@ -25,7 +25,8 @@
       "titleBar.activeForeground": "#ffffff"
     },
     "terminal.integrated.env.windows": {
-      "ZEPHYR_BASE": "${workspaceRoot:src}\\..\\zephyr\\zephyr"
+      "ZEPHYR_BASE": "${workspaceRoot:src}\\..\\zephyr\\zephyr",
+      "ZEPHYR_TOOLCHAIN_VARIANT": "zephyr"
     },
     "files.associations": {
       "random": "cpp",
