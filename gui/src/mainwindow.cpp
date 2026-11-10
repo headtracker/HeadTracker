@@ -9,8 +9,36 @@
 #include "servominmax.h"
 #include "ucrc16lib.h"
 
-
 //#define DEBUG_HT
+
+VersionInfo parseVersion(const QString &versionStr) {
+    VersionInfo verinfo;
+
+    // Regular expression breakdown:
+    // ^(?:v)?     -> Optional leading 'v' (non-capturing)
+    // ([0-9]+)    -> Group 1: Major version (one or more digits)
+    // \.          -> Literal dot separator
+    // ([0-9])     -> Group 2: Minor version (one digit)
+    // (.*)$       -> Group 3: Optional Patch version (one digit) and appendix (everything else until the end)
+    QRegularExpression rexp(R"(^(?:v)?([0-9]+)\.([0-9])(.*)$)");
+    QRegularExpressionMatch match = rexp.match(versionStr);
+
+    if (match.hasMatch()) {
+        verinfo.major = match.captured(1);
+        verinfo.minor = match.captured(2);
+        verinfo.appendix = match.captured(3);
+        verinfo.isValid = true;
+    } else {
+        verinfo.major = "?";
+        verinfo.minor = "?";
+        verinfo.appendix = "?";
+        verinfo.isValid = false;
+    }
+
+    return verinfo;
+}
+
+const VersionInfo version = parseVersion(STR_VALUE(GIT_VERSION_TAG)); // Current Version Number
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -34,9 +62,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Once correct board is discovered this will be set to one of the above boards
     ui->tabBLE->setCurrentIndex(0);
-
-    QString guiDisplayVersion = version;
-    guiDisplayVersion.remove(4,1);
+    QString guiDisplayVersion;
+    if (version.isValid) {
+        guiDisplayVersion = "v" + version.major + "." + version.minor + version.appendix;
+    } else {
+        guiDisplayVersion = "Version unknown";
+    }
     setWindowTitle(windowTitle() + " " + guiDisplayVersion);
 
     // Serial Connection
@@ -1409,29 +1440,33 @@ void MainWindow::boardDiscovered()
 {    
     // Check Firmware Version is Compatible
 
-    // GUI Version
-    QString lfver = version;
-    lfver.remove(0,1);
-    lfver.remove(1,1);
-    int lmajver = lfver.left(2).toInt();   // Major Version 1.1x == 11
-
     // Remote Version
-    int rmajver = trkset.fwVersion().remove(1,1).left(2).toInt();    // Major Version 1.1x == 11
+    VersionInfo rversion = parseVersion(trkset.fwVersion());
 
-    // Firmware is too old
-    if(lmajver > rmajver) {
-        msgbox->setText(tr("The firmware on the board is too old. Upload a ") + QString::number((float)lmajver/10,'f',1) + "x version of firmware for this GUI");
-        msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
-        msgbox->show();
-        serialDisconnect();
-
-    // Firmware is too new
-    } else if (lmajver < rmajver) {
-        msgbox->setText(tr("Firmware is newer than supported by this application\nDownload the GUI v") + QString::number((float)rmajver/10,'f',1) +" from www.github.com/dlktdr/headtracker");
-        msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
+    if (version.isValid && rversion.isValid) {
+        // Compare the major version and minor version
+        // Example "v2.50pre" -> major 2, minor 5. Patch 0 and appendix "pre" are not compared.
+        if((10*version.major.toUInt() + version.minor.toUInt()) > (10*rversion.major.toInt() + rversion.minor.toUInt())) {
+            // Firmware is too old
+            msgbox->setText(tr("The firmware on the board is too old. Upload a ") + version.major + ".x version of firmware for this GUI");
+            msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
+            msgbox->show();
+            serialDisconnect();
+        } else if ((10*version.major.toUInt() + version.minor.toUInt()) < (10*rversion.major.toInt() + rversion.minor.toUInt())) {
+            // Firmware is too new
+            msgbox->setText(tr("Firmware is newer than supported by this application\nDownload the GUI v") + rversion.major + "." + rversion.minor + " from www.github.com/headtracker/headtracker");
+            msgbox->setWindowTitle(tr("Firmware Version Mismatch"));
+            msgbox->show();
+            serialDisconnect();
+        }
+    } else {
+        // Cannot read Git tag
+        msgbox->setText(tr("Cannot read the version info!"));
+        msgbox->setWindowTitle(tr("Version Readout Error!"));
         msgbox->show();
         serialDisconnect();
     }
+
     if(channelViewerOpen) {
         channelviewer->show();
     }

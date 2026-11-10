@@ -30,15 +30,20 @@
 
 #define STRINGIZER(arg) #arg
 #define STR_VALUE(arg) STRINGIZER(arg)
-#define GIT_VERSION_TAG_STRING STR_VALUE(GIT_VERSION_TAG)
 #define GIT_CURRENT_SHA_STRING STR_VALUE(GIT_CURRENT_SHA)
 
+struct VersionInfo {
+    QString major;
+    QString minor;
+    QString appendix;
+    bool isValid = false;
+};
+
 constexpr int MAX_LOG_LENGTH=6000; // How many bytes to keep of log data in the gui
-const QString version=GIT_VERSION_TAG_STRING; // Current Version Number
 const QStringList firmwares={"BNO055","NANO33BLE"}; // Allowable hardware types
 const QUrl helpurl("https://headtracker.gitbook.io/head-tracker-v2.2/settings/gui-settings");
 const QUrl discordurl("https://discord.gg/ux5hEaNSPQ");
-const QUrl githuburl("https://github.com/dlktdr/HeadTracker");
+const QUrl githuburl("https://github.com/HeadTracker/HeadTracker");
 const QUrl donateurl("https://www.paypal.com/donate?hosted_button_id=NMU3B9Z82JB3A");
 
 constexpr int IMHERETIME=8000; // milliseconds before sending another I'm Here Message to keep communication open
